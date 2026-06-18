@@ -9,8 +9,8 @@ export function middleware(req) {
 
   const { pathname } = req.nextUrl;
 
-  // Allow the login page and its POST action through
-  if (pathname === "/login") return NextResponse.next();
+  // Allow the login page and its API route through
+  if (pathname === "/login" || pathname === "/api/login") return NextResponse.next();
 
   // Check auth cookie
   const cookie = req.cookies.get(COOKIE);
