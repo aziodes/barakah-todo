@@ -1,6 +1,8 @@
 import { extractTasks } from "../../../lib/extractTasks";
 import { supabase, TASKS_TABLE } from "../../../lib/supabaseClient";
 
+const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
 function stripQuotes(val) {
   return typeof val === "string" ? val.replace(/^["'\s]+|["'\s]+$/g, "") : val;
 }
@@ -44,6 +46,7 @@ export async function POST(req) {
   }
 
   const rows = tasks.map((t) => ({
+    id: uid(),
     title: t.title,
     note: t.note || null,
     category: t.category,
