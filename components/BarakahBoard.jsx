@@ -497,11 +497,12 @@ export default function BarakahBoard({ onTasksChange }) {
   const [dragOver, setDragOver] = useState(null);
   const dragId = useRef(null);
 
-  // Initial load from Supabase, if configured.
+  // Initial load + real-time subscription from Supabase.
   useEffect(() => {
+    if (!supabase) { setLoading(false); return; }
+
     let active = true;
     async function load() {
-      if (!supabase) { setLoading(false); return; }
       const { data, error } = await supabase
         .from(TASKS_TABLE)
         .select("*")
@@ -515,7 +516,18 @@ export default function BarakahBoard({ onTasksChange }) {
       setLoading(false);
     }
     load();
-    return () => { active = false; };
+
+    const channel = supabase
+      .channel("barakah_tasks_changes")
+      .on("postgres_changes", { event: "*", schema: "public", table: TASKS_TABLE }, () => {
+        load();
+      })
+      .subscribe();
+
+    return () => {
+      active = false;
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const notifyParent = (next) => { onTasksChange && onTasksChange(next); };
