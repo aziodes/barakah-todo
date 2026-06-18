@@ -4,7 +4,7 @@ import React, { useState, useCallback, useMemo, useRef, useEffect } from "react"
 import {
   Inbox, Sun, Loader2, CheckCircle2, Plus, Sparkles, Mail,
   MessageCircle, Send, Keyboard, ChevronDown, ChevronRight,
-  CalendarDays, GripVertical, Trash2, Moon, Scale, ArrowUpRight, LayoutGrid
+  CalendarDays, GripVertical, Trash2, Moon, Scale, ArrowUpRight, LayoutGrid, MoveRight
 } from "lucide-react";
 import { supabase, TASKS_TABLE } from "../lib/supabaseClient";
 
@@ -105,8 +105,10 @@ const SEED = [
 // ============================================================
 function TaskCard({ task, onUpdate, onDelete, onDragStart, isInbox }) {
   const [open, setOpen] = useState(false);
+  const [showMove, setShowMove] = useState(false);
   const cat = CATEGORIES[task.category];
   const Src = SOURCE_META[task.source]?.icon || Keyboard;
+  const otherCols = COLUMNS.filter((c) => c.id !== task.status);
 
   return (
     <div
@@ -148,14 +150,46 @@ function TaskCard({ task, onUpdate, onDelete, onDragStart, isInbox }) {
               )}
             </div>
           </div>
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="shrink-0 rounded p-1 opacity-0 group-hover:opacity-60 hover:opacity-100 transition-opacity"
-            aria-label="Edit task"
-          >
-            {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-          </button>
+          <div className="shrink-0 flex items-center gap-0.5">
+            <button
+              onClick={() => { setShowMove((v) => !v); setOpen(false); }}
+              className="rounded p-1 opacity-60 hover:opacity-100 md:opacity-0 md:group-hover:opacity-60 transition-opacity"
+              aria-label="Move to column"
+              title="Move to…"
+            >
+              <MoveRight size={14} />
+            </button>
+            <button
+              onClick={() => { setOpen((v) => !v); setShowMove(false); }}
+              className="rounded p-1 opacity-0 group-hover:opacity-60 hover:opacity-100 transition-opacity"
+              aria-label="Edit task"
+            >
+              {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+          </div>
         </div>
+
+        {showMove && (
+          <div className="mt-2 flex flex-wrap gap-1.5 border-t pt-2" style={{ borderColor: "#EFE8D4" }}>
+            <span className="text-[10px] self-center mr-1" style={{ color: T.mute }}>Move to:</span>
+            {otherCols.map((col) => {
+              const Icon = col.icon;
+              return (
+                <button
+                  key={col.id}
+                  onClick={() => {
+                    onUpdate(task.id, { status: col.id, ...(col.id === "today" ? { scope: "today" } : {}) });
+                    setShowMove(false);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium border transition-colors active:scale-95"
+                  style={{ background: T.sandDeep, color: T.tealDeep, borderColor: "#D4C9A8" }}
+                >
+                  <Icon size={11} /> {col.label}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {open && (
           <div className="mt-3 space-y-2 border-t pt-3" style={{ borderColor: "#EFE8D4" }}>
