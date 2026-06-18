@@ -8,8 +8,15 @@ const MAX_AGE = 60 * 60 * 24 * 30;
 export async function POST(req) {
   const { password } = await req.json();
 
-  if (!PASSWORD || password !== PASSWORD) {
-    return NextResponse.json({ error: "Incorrect password" }, { status: 401 });
+  if (!PASSWORD) {
+    return NextResponse.json({ error: "SITE_PASSWORD env var not set on server" }, { status: 401 });
+  }
+
+  if (password !== PASSWORD) {
+    return NextResponse.json({
+      error: "Incorrect password",
+      debug: { submittedLength: password.length, expectedLength: PASSWORD.length }
+    }, { status: 401 });
   }
 
   const res = NextResponse.json({ ok: true });
