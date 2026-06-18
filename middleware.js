@@ -10,7 +10,7 @@ export function middleware(req) {
   const { pathname } = req.nextUrl;
 
   // Allow the login page, its API route, and the n8n ingest endpoint through
-  if (pathname === "/login" || pathname === "/api/login" || pathname === "/api/ingest") return NextResponse.next();
+  if (pathname === "/login" || pathname === "/api/login" || pathname === "/api/ingest" || pathname === "/api/telegram") return NextResponse.next();
 
   // Check auth cookie
   const cookie = req.cookies.get(COOKIE);
