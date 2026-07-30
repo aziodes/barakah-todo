@@ -5,8 +5,8 @@ runs as a real, installable app — open it from your phone's home screen
 without going through Claude.
 
 Backend is **Firebase** (Cloud Firestore + Email/Password Auth). It was
-migrated off Supabase; see `scripts/migrate-supabase-to-firestore.mjs` for
-the one-shot data move.
+migrated off Supabase in July 2026; the one-shot migration script has since
+been removed along with the Supabase project.
 
 ## 1. Firebase project
 
@@ -70,29 +70,16 @@ The `NEXT_PUBLIC_FIREBASE_*` values are **not secrets** — Firebase web
 config is designed to ship in the client bundle. Access control lives in
 `firestore.rules`, which only answers to the owner's email.
 
-**Now removed:** `SITE_PASSWORD` and `NEXT_PUBLIC_SUPABASE_*`. Delete them
-from Vercel once the Firebase board is verified working.
+Note that `vercel env pull` writes **empty values** for any var added via
+`vercel env add` — those are stored write-only and can't be read back. Only
+dashboard-added vars decrypt. Check values are non-empty before trusting a
+local build, or it will silently fall into demo mode.
 
 Without the `NEXT_PUBLIC_FIREBASE_*` vars the app runs in local demo mode
 (a banner says so) rather than crashing, and without an Anthropic key the
 extract tool returns a clear error.
 
-## 3. Migrating the data
-
-One-shot, idempotent (writes under the same document ids, so a second run
-overwrites rather than duplicating). Nothing is deleted from Supabase.
-
-```bash
-SUPABASE_URL='https://vdixqbvgshrvdwrhaeiv.supabase.co' \
-SUPABASE_ANON_KEY='<anon key>' \
-FIREBASE_SERVICE_ACCOUNT="$(cat serviceAccount.json)" \
-npm run migrate:firestore -- --dry-run
-```
-
-Drop `--dry-run` to write for real. Keep the Supabase project intact until
-the Firebase board is confirmed good.
-
-## 4. Auth model
+## 3. Auth model
 
 - Sign-in is Firebase Email/Password, handled by `components/AuthGate.jsx`.
   The old `SITE_PASSWORD` cookie middleware, `/login` page and
@@ -106,7 +93,7 @@ the Firebase board is confirmed good.
   their own shared secrets and write through the Admin SDK, which bypasses
   Firestore rules by design.
 
-## 5. Install it on your devices
+## 4. Install it on your devices
 
 - **iPhone / iPad (Safari):** open the URL → Share → **Add to Home Screen**.
 - **MacBook Air (Safari or Chrome):** open the URL → Share/menu →

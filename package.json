@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "migrate:firestore": "node scripts/migrate-supabase-to-firestore.mjs"
+    "start": "next start"
   },
   "dependencies": {
     "firebase": "^11.1.0",
@@ -17,7 +16,6 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@supabase/supabase-js": "^2.45.0",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.5.25",
     "tailwindcss": "^3.4.7"
