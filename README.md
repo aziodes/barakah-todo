@@ -4,104 +4,122 @@ A standalone Next.js app wrapping the Barakah Board Kanban module so it
 runs as a real, installable app — open it from your phone's home screen
 without going through Claude.
 
-This package is built and verified (`npm run build` passes). What's left
-are a handful of one-time steps in your own accounts, since I can't reach
-Vercel, Supabase, or your n8n instance directly.
+Backend is **Firebase** (Cloud Firestore + Email/Password Auth). It was
+migrated off Supabase; see `scripts/migrate-supabase-to-firestore.mjs` for
+the one-shot data move.
 
-## 1. Database — Supabase
+## 1. Firebase project
 
-In your Supabase project's SQL editor (reuse the Istiqamah project, or
-spin up a fresh free one for testing — your call), run:
+Already created:
 
-```sql
-create table barakah_tasks (
-  id text primary key,
-  title text not null,
-  note text default '',
-  source text not null default 'manual',
-  category text not null default 'dunya',
-  scope text not null default 'today',
-  salah_block text,
-  status text not null default 'inbox',
-  created_at timestamptz not null default now()
-);
+| Thing | Value |
+|---|---|
+| Project ID | `barakah-todo` |
+| Display name | Barakah Board |
+| Web app ID | `1:794537641944:web:e9fae2293a3c7c52bed4ad` |
+| Firestore location | `us-central1` (permanent) |
+| Collection | `barakah_tasks` |
+| Console | https://console.firebase.google.com/project/barakah-todo |
 
-alter table barakah_tasks enable row level security;
+### One-time console steps
 
--- Single-user personal app for now: allow all access via the anon key.
--- Tighten this with real auth before anyone besides you can reach the URL.
-create policy "allow all for now"
-  on barakah_tasks for all
-  using (true)
-  with check (true);
-```
+These need a human in the Firebase console — the CLI can't do them on a
+fresh project without broader OAuth scopes.
 
-Then grab **Project Settings → API**: the Project URL and the `anon` public key.
+1. **Enable the Firestore API**, then the database can be created:
+   https://console.developers.google.com/apis/api/firestore.googleapis.com/overview?project=barakah-todo
+   ```bash
+   firebase firestore:databases:create "(default)" --location=us-central1 --project barakah-todo
+   ```
+2. **Enable Email/Password sign-in**:
+   Authentication → Sign-in method → Email/Password → Enable.
+3. **Create your user** (Authentication → Users → Add user). Use the same
+   address as `BARAKAH_OWNER_EMAIL` below, or the rules will lock you out.
+4. **Optional hardening:** Authentication → Settings → User actions →
+   uncheck **Enable create (sign-up)**. Rules already reject any address
+   other than the owner's, so this only stops junk accounts existing.
+5. **Deploy the security rules:**
+   ```bash
+   firebase deploy --only firestore:rules --project barakah-todo
+   ```
+6. **Service account** for the server routes: Project Settings → Service
+   accounts → Generate new private key. Paste the whole JSON as the
+   `FIREBASE_SERVICE_ACCOUNT` env var (see below).
 
 ## 2. Environment variables
 
-Copy `.env.local.example` to `.env.local` for local testing, or set these
-directly in Vercel (**Project Settings → Environment Variables**):
+Set these in Vercel (**Project Settings → Environment Variables**).
 
-| Variable | Where it comes from |
+| Variable | Value / where it comes from |
 |---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase → Project Settings → API |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase → Project Settings → API |
-| `ANTHROPIC_API_KEY` | console.anthropic.com → API Keys (separate from your Claude Pro subscription — this is pay-per-token billing) |
-| `ANTHROPIC_MODEL` | optional, defaults to `claude-sonnet-4-6`; try `claude-haiku-4-5-20251001` for a cheaper/faster extraction step |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | `AIzaSyAwSp_8J50frX91Iurgd07IfII4lwInytU` |
+| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | `barakah-todo.firebaseapp.com` |
+| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | `barakah-todo` |
+| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | `barakah-todo.firebasestorage.app` |
+| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | `794537641944` |
+| `NEXT_PUBLIC_FIREBASE_APP_ID` | `1:794537641944:web:e9fae2293a3c7c52bed4ad` |
+| `FIREBASE_SERVICE_ACCOUNT` | The full service-account JSON, one line. Server-only — never prefix with `NEXT_PUBLIC_`. |
+| `BARAKAH_OWNER_EMAIL` | Your sign-in address. Must match the address hardcoded in `firestore.rules`. |
+| `ANTHROPIC_API_KEY` | console.anthropic.com → API Keys (pay-per-token, separate from Claude Pro) |
+| `ANTHROPIC_MODEL` | optional, defaults to `claude-sonnet-4-6` |
+| `N8N_SHARED_SECRET` | shared secret for `/api/ingest` (n8n + iOS Shortcut) |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token, for webhook replies |
+| `TELEGRAM_WEBHOOK_SECRET` | secret verifying inbound Telegram webhook calls |
 
-**Cost note:** the "Extract from message" tool now calls the Anthropic API
-directly using your own key, billed separately from Claude Pro. For a
-single-user inbox-triage tool this is genuinely small (each extraction is
-one short call), but if you want to keep it at zero marginal cost,
-swap the `/api/extract` route to call your local Ollama instance instead
-— happy to do that swap as a follow-up if you'd rather route it that way.
+The `NEXT_PUBLIC_FIREBASE_*` values are **not secrets** — Firebase web
+config is designed to ship in the client bundle. Access control lives in
+`firestore.rules`, which only answers to the owner's email.
 
-You can deploy and test the board *before* setting any of this — without
-Supabase keys it runs in local demo mode (a banner says so), and without
-an Anthropic key the extract tool will return a clear error instead of
-crashing.
+**Now removed:** `SITE_PASSWORD` and `NEXT_PUBLIC_SUPABASE_*`. Delete them
+from Vercel once the Firebase board is verified working.
 
-## 3. Deploy to Vercel
+Without the `NEXT_PUBLIC_FIREBASE_*` vars the app runs in local demo mode
+(a banner says so) rather than crashing, and without an Anthropic key the
+extract tool returns a clear error.
+
+## 3. Migrating the data
+
+One-shot, idempotent (writes under the same document ids, so a second run
+overwrites rather than duplicating). Nothing is deleted from Supabase.
 
 ```bash
-cd barakah-board-pwa
-git init
-git add .
-git commit -m "Barakah Board PWA"
+SUPABASE_URL='https://vdixqbvgshrvdwrhaeiv.supabase.co' \
+SUPABASE_ANON_KEY='<anon key>' \
+FIREBASE_SERVICE_ACCOUNT="$(cat serviceAccount.json)" \
+npm run migrate:firestore -- --dry-run
 ```
 
-Push to a GitHub repo (e.g. under your `@aziodes` account), then in Vercel:
-**Add New → Project → import the repo → it auto-detects Next.js → add the
-environment variables above → Deploy.**
+Drop `--dry-run` to write for real. Keep the Supabase project intact until
+the Firebase board is confirmed good.
 
-You'll get a `*.vercel.app` URL. That's the address that "works from
-anywhere."
+## 4. Auth model
 
-**Security note:** with no auth yet, anyone with that URL can use the
-board. For a personal tool this is a minor risk since the URL isn't
-public anywhere, but if that bothers you, turn on **Vercel → Project →
-Settings → Deployment Protection → Password Protection** (free on Hobby)
-until proper auth is built later.
+- Sign-in is Firebase Email/Password, handled by `components/AuthGate.jsx`.
+  The old `SITE_PASSWORD` cookie middleware, `/login` page and
+  `/api/login` route are gone.
+- The page shell is public but holds no data. Real protection is
+  `firestore.rules`: only the owner's address can read or write
+  `barakah_tasks`.
+- `/api/extract` spends Anthropic credits, so it verifies the caller's
+  Firebase ID token — it used to rely on the middleware for that.
+- `/api/ingest` and `/api/telegram` are machine-to-machine. They keep
+  their own shared secrets and write through the Admin SDK, which bypasses
+  Firestore rules by design.
 
-## 4. Install it on your devices
-
-Once deployed:
+## 5. Install it on your devices
 
 - **iPhone / iPad (Safari):** open the URL → Share → **Add to Home Screen**.
 - **MacBook Air (Safari or Chrome):** open the URL → Share/menu →
   **Add to Dock** (Safari) or the install icon in the address bar (Chrome).
 
-It'll open full-screen with its own icon, no browser chrome, no Claude
-chat in the loop — exactly the "open anywhere during the day" version
-you were after.
+## Capture channels
 
-## What's still ahead
+1. **Gmail** — "Barakah" label → n8n workflow → `/api/ingest`
+2. **Telegram** — direct webhook at `/api/telegram`
+3. **WhatsApp** → iOS Shortcut "Add to Barakah Board" → `/api/ingest`
 
-This ships the board itself as a real app with real persistence. The
-n8n webhook ingestion (Gmail/WhatsApp/Telegram → this same
-`barakah_tasks` table) is the next layer on top — same database, so
-nothing here needs to change when that's wired up later.
+All three write into the same `barakah_tasks` collection, so the board
+picks them up live via `onSnapshot`.
 
 ## Local development
 

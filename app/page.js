@@ -1,5 +1,10 @@
+import AuthGate from "../components/AuthGate";
 import BarakahBoard from "../components/BarakahBoard";
 
 export default function Page() {
-  return <BarakahBoard />;
+  return (
+    <AuthGate>
+      <BarakahBoard />
+    </AuthGate>
+  );
 }

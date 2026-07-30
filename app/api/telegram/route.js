@@ -1,5 +1,6 @@
 import { extractTasks } from "../../../lib/extractTasks";
-import { supabase, TASKS_TABLE } from "../../../lib/supabaseClient";
+import { adminDb, TASKS_COLLECTION } from "../../../lib/firebaseAdmin";
+import { Timestamp } from "firebase-admin/firestore";
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
@@ -54,29 +55,38 @@ export async function POST(req) {
     return Response.json({ ok: true });
   }
 
-  if (!supabase) {
+  if (!adminDb) {
     await sendTelegramMessage(chatId, "Database not configured.");
     return Response.json({ ok: false }, { status: 500 });
   }
 
+  // Admin SDK writes bypass firestore.rules — this route is authenticated by
+  // the Telegram secret-token header instead of a user session.
   const rows = tasks.map((t) => ({
     id: uid(),
     title: t.title,
-    note: t.note || null,
+    note: t.note || "",
     category: t.category,
     scope: t.scope,
-    salah_block: t.salahBlock || null,
+    salahBlock: t.salahBlock || null,
     status: "inbox",
     source: "telegram",
     sender,
-    received_at: new Date(msg.date * 1000).toISOString(),
-    external_id: `tg-${msg.message_id}`,
+    receivedAt: Timestamp.fromMillis(msg.date * 1000),
+    externalId: `tg-${msg.message_id}`,
+    createdAt: Timestamp.now(),
   }));
 
-  const { error } = await supabase.from(TASKS_TABLE).insert(rows);
-  if (error) {
+  try {
+    const batch = adminDb.batch();
+    rows.forEach((r) => {
+      const { id, ...fields } = r;
+      batch.set(adminDb.collection(TASKS_COLLECTION).doc(id), fields);
+    });
+    await batch.commit();
+  } catch (e) {
     await sendTelegramMessage(chatId, "Failed to save tasks. Try again.");
-    return Response.json({ ok: false, error: error.message }, { status: 500 });
+    return Response.json({ ok: false, error: e.message }, { status: 500 });
   }
 
   await sendTelegramMessage(

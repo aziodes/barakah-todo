@@ -1,5 +1,6 @@
 import { extractTasks } from "../../../lib/extractTasks";
-import { supabase, TASKS_TABLE } from "../../../lib/supabaseClient";
+import { adminDb, TASKS_COLLECTION } from "../../../lib/firebaseAdmin";
+import { Timestamp } from "firebase-admin/firestore";
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
@@ -40,29 +41,47 @@ export async function POST(req) {
     return Response.json({ status: "ok", tasks_created: 0, tasks: [] });
   }
 
-  // Insert into Supabase
-  if (!supabase) {
-    return Response.json({ status: "error", message: "Supabase not configured" }, { status: 500 });
+  // Insert into Firestore via the Admin SDK, which bypasses firestore.rules —
+  // this route authenticates with N8N_SHARED_SECRET instead of a user session.
+  if (!adminDb) {
+    return Response.json(
+      { status: "error", message: "Firebase Admin not configured — set FIREBASE_SERVICE_ACCOUNT" },
+      { status: 500 }
+    );
   }
 
-  const rows = tasks.map((t) => ({
+  // received_at arrives as an ISO string from n8n; null when absent.
+  const toTimestamp = (v) => {
+    if (!v) return null;
+    const ms = Date.parse(v);
+    return Number.isNaN(ms) ? null : Timestamp.fromMillis(ms);
+  };
+
+  const docs = tasks.map((t) => ({
     id: uid(),
     title: t.title,
-    note: t.note || null,
+    note: t.note || "",
     category: t.category,
     scope: t.scope,
-    salah_block: t.salahBlock || null,
+    salahBlock: t.salahBlock || null,
     status: "inbox",
     source: source || "n8n",
     sender: sender || null,
-    received_at: received_at || null,
-    external_id: external_id || null,
+    receivedAt: toTimestamp(received_at),
+    externalId: external_id || null,
+    createdAt: Timestamp.now(),
   }));
 
-  const { data: inserted, error } = await supabase.from(TASKS_TABLE).insert(rows).select();
-  if (error) {
-    return Response.json({ status: "error", message: error.message }, { status: 500 });
+  try {
+    const batch = adminDb.batch();
+    docs.forEach((d) => {
+      const { id, ...fields } = d;
+      batch.set(adminDb.collection(TASKS_COLLECTION).doc(id), fields);
+    });
+    await batch.commit();
+  } catch (e) {
+    return Response.json({ status: "error", message: e.message }, { status: 500 });
   }
 
-  return Response.json({ status: "ok", tasks_created: inserted.length, tasks: inserted });
+  return Response.json({ status: "ok", tasks_created: docs.length, tasks: docs });
 }

@@ -6,21 +6,30 @@ import {
   MessageCircle, Send, Keyboard, ChevronDown, ChevronRight,
   CalendarDays, GripVertical, Trash2, Moon, Scale, ArrowUpRight, LayoutGrid, MoveRight
 } from "lucide-react";
-import { supabase, TASKS_TABLE } from "../lib/supabaseClient";
+import {
+  collection, query, orderBy, onSnapshot, doc, writeBatch,
+  updateDoc, deleteDoc, serverTimestamp, Timestamp,
+} from "firebase/firestore";
+import { db, auth, TASKS_COLLECTION } from "../lib/firebaseClient";
 
 /* ============================================================
    BARAKAH BOARD — standalone task triage & Kanban module
    ------------------------------------------------------------
-   Persistence: if NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY are set,
-   tasks read/write through Supabase (synced across every device
-   you open this PWA on). If unset, falls back to local in-memory
-   demo mode — useful for testing the shell before wiring the DB.
+   Persistence: if the NEXT_PUBLIC_FIREBASE_* vars are set, tasks
+   read/write through Cloud Firestore (synced across every device
+   you open this PWA on, via onSnapshot). If unset, falls back to
+   local in-memory demo mode — useful for testing the shell
+   before wiring the DB.
+
+   Access control lives in firestore.rules: only the owner's
+   signed-in email may touch barakah_tasks. AuthGate handles
+   sign-in before this component ever mounts.
 
    Ingestion: extraction calls POST /api/extract (server route,
-   holds the Anthropic key). n8n webhooks will later write
-   directly into the same Supabase table from Gmail/WhatsApp/
-   Telegram — this component doesn't need to know about that,
-   it just reads whatever is in barakah_tasks.
+   holds the Anthropic key, requires the caller's Firebase ID
+   token). n8n and Telegram webhooks write into the same
+   collection through the Admin SDK — this component doesn't need
+   to know about that, it just listens to barakah_tasks.
    ============================================================ */
 
 const T = {
@@ -60,21 +69,46 @@ const SOURCE_META = {
 
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
-const rowToTask = (r) => ({
-  id: r.id, title: r.title, note: r.note || "", source: r.source,
-  category: r.category, scope: r.scope, salahBlock: r.salah_block,
-  status: r.status, createdAt: new Date(r.created_at).getTime(),
-});
-const taskToRow = (t) => ({
-  id: t.id, title: t.title, note: t.note || "", source: t.source,
-  category: t.category, scope: t.scope, salah_block: t.salahBlock,
-  status: t.status, created_at: new Date(t.createdAt).toISOString(),
+// Firestore stores the app's own camelCase field names, so the mapping is
+// near-identity. The one conversion that matters is createdAt: written as a
+// server Timestamp (so ordering is authoritative), read back as epoch ms.
+// A doc written moments ago can arrive with createdAt still null from the
+// local optimistic snapshot — fall back to now so sorting stays stable.
+const docToTask = (snap) => {
+  const d = snap.data() || {};
+  return {
+    id: snap.id,
+    title: d.title,
+    note: d.note || "",
+    source: d.source,
+    category: d.category,
+    scope: d.scope,
+    salahBlock: d.salahBlock ?? null,
+    status: d.status,
+    createdAt: d.createdAt?.toMillis?.() ?? Date.now(),
+  };
+};
+
+const taskToDoc = (t) => ({
+  title: t.title,
+  note: t.note || "",
+  source: t.source,
+  category: t.category,
+  scope: t.scope,
+  salahBlock: t.salahBlock ?? null,
+  status: t.status,
+  createdAt: t.createdAt ? Timestamp.fromMillis(t.createdAt) : serverTimestamp(),
 });
 
 async function extractTasksFromText(rawText, sourceHint) {
+  // /api/extract spends Anthropic credits, so it demands a valid ID token.
+  const token = auth?.currentUser ? await auth.currentUser.getIdToken() : null;
   const res = await fetch("/api/extract", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ rawText, sourceHint }),
   });
   const payload = await res.json();
@@ -525,75 +559,79 @@ function EmptyHint({ text }) {
 //  BOARD (default export — this is the page)
 // ============================================================
 export default function BarakahBoard({ onTasksChange }) {
-  const [tasks, setTasks] = useState(supabase ? [] : SEED);
-  const [loading, setLoading] = useState(Boolean(supabase));
+  const [tasks, setTasks] = useState(db ? [] : SEED);
+  const [loading, setLoading] = useState(Boolean(db));
   const [view, setView] = useState("board");
   const [dragOver, setDragOver] = useState(null);
   const dragId = useRef(null);
 
-  // Initial load + real-time subscription from Supabase.
+  // Firestore onSnapshot covers both the initial load and live updates, so
+  // there's no separate fetch — one listener replaces the old load() +
+  // postgres_changes channel pair, and it fires locally before the round trip.
   useEffect(() => {
-    if (!supabase) { setLoading(false); return; }
+    if (!db) { setLoading(false); return; }
 
-    let active = true;
-    async function load() {
-      const { data, error } = await supabase
-        .from(TASKS_TABLE)
-        .select("*")
-        .order("created_at", { ascending: false });
-      if (!active) return;
-      if (error) {
-        console.error("Supabase load failed:", error.message);
-      } else if (data) {
-        setTasks(data.map(rowToTask));
+    const q = query(collection(db, TASKS_COLLECTION), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        setTasks(snap.docs.map(docToTask));
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Firestore listener failed:", error.message);
+        setLoading(false);
       }
-      setLoading(false);
-    }
-    load();
+    );
 
-    const channel = supabase
-      .channel("barakah_tasks_changes")
-      .on("postgres_changes", { event: "*", schema: "public", table: TASKS_TABLE }, () => {
-        load();
-      })
-      .subscribe();
-
-    return () => {
-      active = false;
-      supabase.removeChannel(channel);
-    };
+    return unsubscribe;
   }, []);
 
   const notifyParent = (next) => { onTasksChange && onTasksChange(next); };
 
+  // Writes stay optimistic for instant feedback; the onSnapshot listener above
+  // then reconciles against the authoritative server state.
   const addTasks = useCallback(async (newTasks) => {
     setTasks((prev) => { const next = [...newTasks, ...prev]; notifyParent(next); return next; });
-    if (supabase) {
-      const { error } = await supabase.from(TASKS_TABLE).insert(newTasks.map(taskToRow));
-      if (error) console.error("Supabase insert failed:", error.message);
+    if (db) {
+      try {
+        // One batch so a multi-task extraction lands all-or-nothing.
+        const batch = writeBatch(db);
+        newTasks.forEach((t) => {
+          batch.set(doc(db, TASKS_COLLECTION, t.id), taskToDoc(t));
+        });
+        await batch.commit();
+      } catch (e) {
+        console.error("Firestore insert failed:", e.message);
+      }
     }
   }, []);
 
   const updateTask = useCallback(async (id, patch) => {
     setTasks((prev) => { const next = prev.map((t) => (t.id === id ? { ...t, ...patch } : t)); notifyParent(next); return next; });
-    if (supabase) {
-      const row = {};
-      if ("title" in patch) row.title = patch.title;
-      if ("note" in patch) row.note = patch.note;
-      if ("category" in patch) row.category = patch.category;
-      if ("scope" in patch) row.scope = patch.scope;
-      if ("salahBlock" in patch) row.salah_block = patch.salahBlock;
-      if ("status" in patch) row.status = patch.status;
-      const { error } = await supabase.from(TASKS_TABLE).update(row).eq("id", id);
-      if (error) console.error("Supabase update failed:", error.message);
+    if (db) {
+      // Whitelist the writable fields — never let a stray key reach the doc.
+      const fields = {};
+      for (const key of ["title", "note", "category", "scope", "salahBlock", "status"]) {
+        if (key in patch) fields[key] = patch[key] ?? null;
+      }
+      if (Object.keys(fields).length === 0) return;
+      try {
+        await updateDoc(doc(db, TASKS_COLLECTION, id), fields);
+      } catch (e) {
+        console.error("Firestore update failed:", e.message);
+      }
     }
   }, []);
 
   const deleteTask = useCallback(async (id) => {
     setTasks((prev) => { const next = prev.filter((t) => t.id !== id); notifyParent(next); return next; });
-    if (supabase) {
-      const { error } = await supabase.from(TASKS_TABLE).delete().eq("id", id);
-      if (error) console.error("Supabase delete failed:", error.message);
+    if (db) {
+      try {
+        await deleteDoc(doc(db, TASKS_COLLECTION, id));
+      } catch (e) {
+        console.error("Firestore delete failed:", e.message);
+      }
     }
   }, []);
 
@@ -670,10 +708,10 @@ export default function BarakahBoard({ onTasksChange }) {
         </div>
       </header>
 
-      {!supabase && (
+      {!db && (
         <div className="mx-auto max-w-7xl px-4 pt-3">
           <div className="rounded-lg border px-3 py-2 text-xs" style={{ borderColor: T.gold, background: "#FFF8E6", color: T.tealDeep }}>
-            Running in local demo mode — tasks reset on reload and won't sync across devices. Add Supabase keys in Vercel env vars to enable real persistence (see README).
+            Running in local demo mode — tasks reset on reload and won&apos;t sync across devices. Add the NEXT_PUBLIC_FIREBASE_* keys in Vercel env vars to enable real persistence (see README).
           </div>
         </div>
       )}
@@ -765,7 +803,7 @@ export default function BarakahBoard({ onTasksChange }) {
                 Triage order: <span style={{ color: T.clay }}>Fard</span> → <span style={{ color: T.teal }}>Amanah</span> → <span style={{ color: T.green }}>Nafl</span> → <span style={{ color: T.mute }}>Dunya</span>. WIP discipline: keep "In progress" to one or two cards.
               </p>
               <p className="inline-flex items-center gap-1 text-[11px]" style={{ color: T.mute }}>
-                <Moon size={12} /> {supabase ? "Synced via Supabase" : "Local demo mode"}
+                <Moon size={12} /> {db ? "Synced via Firebase" : "Local demo mode"}
               </p>
             </footer>
           </>

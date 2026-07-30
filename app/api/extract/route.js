@@ -3,8 +3,17 @@
 // the key is never exposed to anyone opening the PWA.
 
 import { extractTasks } from "../../../lib/extractTasks";
+import { verifyRequest, isOwner } from "../../../lib/firebaseAdmin";
 
 export async function POST(req) {
+  // This route spends Anthropic credits, so it must not be open to the world.
+  // The old SITE_PASSWORD middleware used to shield it; now that sign-in is
+  // Firebase, the route verifies the caller's ID token itself.
+  const decoded = await verifyRequest(req);
+  if (!decoded || !isOwner(decoded)) {
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }
+
   let body;
   try {
     body = await req.json();

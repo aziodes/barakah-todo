@@ -1,0 +1,33 @@
+rules_version = '2';
+
+// Barakah Board is a single-owner app. Email/Password sign-up is open by default
+// in Firebase, so these rules gate on the owner's address rather than merely on
+// "is signed in" — a stranger who creates an account still gets nothing.
+//
+// No email_verified check: once the owner's address is registered, nobody else
+// can claim it, and console-created users start unverified (Firebase offers no
+// console toggle to fix that), so requiring it would just lock the owner out.
+//
+// Server-side writes (/api/ingest, /api/telegram) go through the Admin SDK,
+// which bypasses these rules entirely by design.
+//
+// Keep the address below in sync with the BARAKAH_OWNER_EMAIL env var.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner() {
+      return request.auth != null
+        && request.auth.token.email != null
+        && request.auth.token.email.lower() == 'myazid@aziodes.com';
+    }
+
+    match /barakah_tasks/{taskId} {
+      allow read, write: if isOwner();
+    }
+
+    // Everything else is closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
