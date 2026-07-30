@@ -21,3 +21,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .vercel
+.env*
+# ...but the placeholder template is meant to be committed. Without this the
+# broad .env* above would silently drop it if it were ever recreated.
+!.env.local.example
