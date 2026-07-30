@@ -52,7 +52,7 @@ Set these in Vercel (**Project Settings → Environment Variables**).
 
 | Variable | Value / where it comes from |
 |---|---|
-| `NEXT_PUBLIC_FIREBASE_API_KEY` | `AIzaSyAwSp_8J50frX91Iurgd07IfII4lwInytU` |
+| `NEXT_PUBLIC_FIREBASE_API_KEY` | Firebase console → Project Settings → your web app, or `firebase apps:sdkconfig WEB <appId>` |
 | `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | `barakah-todo.firebaseapp.com` |
 | `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | `barakah-todo` |
 | `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | `barakah-todo.firebasestorage.app` |
