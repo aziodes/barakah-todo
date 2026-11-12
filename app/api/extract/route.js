@@ -1,8 +1,8 @@
-// Server-side route. Runs on Vercel's Node runtime, never in the
-// browser — this is the only place ANTHROPIC_API_KEY is read, so
-// the key is never exposed to anyone opening the PWA.
+// Server-side route. Runs on Vercel's Node runtime, never in the browser.
+// There is no Anthropic API key: the model call is paid for by this
+// invocation's Vercel OIDC token, exchanged in lib/anthropic.js.
 
-import { extractTasks } from "../../../lib/extractTasks";
+import { extractTasks, ExtractError } from "../../../lib/extractTasks";
 import { verifyRequest, isOwner } from "../../../lib/firebaseAdmin";
 
 export async function POST(req) {
@@ -27,18 +27,13 @@ export async function POST(req) {
   }
 
   try {
-    const tasks = await extractTasks(rawText, sourceHint);
+    const tasks = await extractTasks(rawText, sourceHint, req);
     return Response.json({ tasks });
   } catch (e) {
-    if (e.message.startsWith("Anthropic API error")) {
-      return Response.json({ error: e.message }, { status: 502 });
+    if (e instanceof ExtractError) {
+      return Response.json({ error: e.message }, { status: e.code === "config" ? 500 : 502 });
     }
-    if (e.message === "Server is missing ANTHROPIC_API_KEY") {
-      return Response.json(
-        { error: "Server is missing ANTHROPIC_API_KEY — set it in Vercel project settings." },
-        { status: 500 }
-      );
-    }
+    console.error("extract failed", e);
     return Response.json({ error: "Unexpected server error" }, { status: 500 });
   }
 }

@@ -60,7 +60,10 @@ Set these in Vercel (**Project Settings → Environment Variables**).
 | `NEXT_PUBLIC_FIREBASE_APP_ID` | `1:794537641944:web:e9fae2293a3c7c52bed4ad` |
 | `FIREBASE_SERVICE_ACCOUNT` | The full service-account JSON, one line. Server-only — never prefix with `NEXT_PUBLIC_`. |
 | `BARAKAH_OWNER_EMAIL` | Your sign-in address. Must match the address hardcoded in `firestore.rules`. |
-| `ANTHROPIC_API_KEY` | console.anthropic.com → API Keys (pay-per-token, separate from Claude Pro) |
+| `ANTHROPIC_FEDERATION_RULE_ID` | `fdrl_01MoL3RSLg3SHaysXDLAZnjd` (rule `barakah-todo-production`) |
+| `ANTHROPIC_ORGANIZATION_ID` | `8bb03e31-9b7a-4d0d-944f-7c88015c7bb9` (same as mandala-app) |
+| `ANTHROPIC_SERVICE_ACCOUNT_ID` | `svac_01WyYKNhjFNAWA2EoZpkLeiN` (service account `barakah-todo`) |
+| `ANTHROPIC_WORKSPACE_ID` | `wrkspc_013NPaCc6qamjsWwfJ2Gfgpf` (Default workspace) |
 | `ANTHROPIC_MODEL` | optional, defaults to `claude-sonnet-4-6` |
 | `N8N_SHARED_SECRET` | shared secret for `/api/ingest` (n8n + iOS Shortcut) |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token, for webhook replies |
@@ -76,7 +79,7 @@ dashboard-added vars decrypt. Check values are non-empty before trusting a
 local build, or it will silently fall into demo mode.
 
 Without the `NEXT_PUBLIC_FIREBASE_*` vars the app runs in local demo mode
-(a banner says so) rather than crashing, and without an Anthropic key the
+(a banner says so) rather than crashing, and without the federation IDs the
 extract tool returns a clear error.
 
 ## 3. Auth model
@@ -92,6 +95,47 @@ extract tool returns a clear error.
 - `/api/ingest` and `/api/telegram` are machine-to-machine. They keep
   their own shared secrets and write through the Admin SDK, which bypasses
   Firestore rules by design.
+
+## Anthropic (keyless)
+
+There is **no Anthropic API key**. `lib/anthropic.js` uses Workload Identity
+Federation, ported from mandala-app's `api/_anthropic.ts`:
+
+1. Each Vercel Function invocation carries a Vercel-signed OIDC token in the
+   `x-vercel-oidc-token` header. All three Claude callers (`/api/extract`,
+   `/api/ingest`, `/api/telegram`) pass their `req` to `extractTasks` for it.
+2. That token is addressed to `https://vercel.com/aziodes-projects`, so it is
+   re-issued by `https://oidc.vercel.com/~token` for
+   `aud: https://api.anthropic.com` with a **fresh `jti`** each time (the
+   issuer has JTI replay protection on — never cache the re-issued token).
+3. The SDK exchanges it at Anthropic's `/v1/oauth/token` and caches the
+   short-lived access token per warm instance.
+
+Console setup (Settings → Workload identity), reusing mandala-app's issuer
+`vercel-aziodes-projects` (`https://oidc.vercel.com/aziodes-projects`, max
+token lifetime 2 hours):
+
+- Rule `barakah-todo-production` (`fdrl_01MoL3RSLg3SHaysXDLAZnjd`, created
+  2026-11-13): pattern match on subject
+  `owner:aziodes-projects:project:barakah-todo:environment:production`, plus
+  exact claim conditions `project_id = prj_zm3cLpHC440OW8spA1Jf1jt87wX7` and
+  `owner_id = team_Rw961VpZwmqar6PTxMVqV5Ys` (names can be reused; IDs can't).
+  Audience blank (= `https://api.anthropic.com`), Default workspace,
+  `workspace:developer`. **Renaming the Vercel project changes `sub`** and
+  breaks it.
+- Service account `barakah-todo` (`svac_01WyYKNhjFNAWA2EoZpkLeiN`), Developer
+  role, Default workspace, so spend is attributed separately from Mandala.
+- None of these IDs is a secret. They are set in Vercel **Production** only.
+
+Gotchas:
+
+- **Never set `ANTHROPIC_API_KEY` in Vercel.** The client passes
+  `apiKey: null`, but delete the variable anyway so nothing else picks it up.
+- A refused exchange is a bare `401` in the logs. The reason is only in the
+  Console's Workload identity → authentication history.
+- Preview deployments and `next dev` won't reach the model: the rule admits
+  production only. For local testing, `vercel env pull` gives a 12-hour
+  development token, which the rule rejects unless you add a development rule.
 
 ## 4. Install it on your devices
 

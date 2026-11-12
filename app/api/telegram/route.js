@@ -44,7 +44,7 @@ export async function POST(req) {
 
   let tasks;
   try {
-    tasks = await extractTasks(msg.text, "telegram");
+    tasks = await extractTasks(msg.text, "telegram", req);
   } catch (e) {
     await sendTelegramMessage(chatId, "Something went wrong extracting tasks. Try again.");
     return Response.json({ ok: false, error: e.message }, { status: 500 });

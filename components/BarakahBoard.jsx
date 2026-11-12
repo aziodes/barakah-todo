@@ -26,7 +26,7 @@ import { db, auth, TASKS_COLLECTION } from "../lib/firebaseClient";
    sign-in before this component ever mounts.
 
    Ingestion: extraction calls POST /api/extract (server route,
-   holds the Anthropic key, requires the caller's Firebase ID
+   calls Claude keylessly via Vercel OIDC, requires the caller's Firebase ID
    token). n8n and Telegram webhooks write into the same
    collection through the Admin SDK — this component doesn't need
    to know about that, it just listens to barakah_tasks.

@@ -32,7 +32,7 @@ export async function POST(req) {
   // Extract tasks via shared helper
   let tasks;
   try {
-    tasks = await extractTasks(message, source || "n8n");
+    tasks = await extractTasks(message, source || "n8n", req);
   } catch (e) {
     return Response.json({ status: "error", message: e.message }, { status: 500 });
   }
