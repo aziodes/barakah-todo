@@ -147,6 +147,12 @@ Gotchas:
 
 1. **Gmail** — "Barakah" label → n8n workflow → `/api/ingest`
 2. **Telegram** — direct webhook at `/api/telegram`
+   - The bot's webhook must point at
+     `https://barakah-todo.vercel.app/api/telegram` with `secret_token` =
+     `TELEGRAM_WEBHOOK_SECRET`. It was found **empty** on 2026-11-13 (the bot
+     had been silent since 2026-06-25) and re-registered. If the bot goes quiet,
+     check `getWebhookInfo` first. Anything else that claims this bot (an n8n
+     Telegram trigger, `getUpdates` polling) replaces or clears the webhook.
 3. **WhatsApp** → iOS Shortcut "Add to Barakah Board" → `/api/ingest`
 
 All three write into the same `barakah_tasks` collection, so the board
